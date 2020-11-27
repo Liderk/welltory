@@ -1,87 +1,100 @@
-from jsonschema import validate, Draft7Validator
+from jsonschema import Draft7Validator
 import json
 import os
 
 
 class ValidateJson:
-    def __init__(self, file, schemas):
-        self.file = file
+    def __init__(self, schemas):
         self.schemas = schemas
-        self.messages = []
+        self.errors = []
+        self.message = []
 
-    def _write_log_file(self):
-        with open('errors.log', 'a') as logfile:
-            logfile.write(f'в файле {self.file}' + '\n')
-            for message in self.messages:
-                logfile.write(message + '\n')
-            logfile.write('_______________' + '\n')
+    def _errors(self):
+        if not self.errors:
+            return
 
-    def load_json(self):
-        with open(f'event/{self.file}', 'r', encoding='utf-8') as read_j:
-            data = json.load(read_j)
-        return data
-
-    def _get_schema(self, json_data):
-        schema_name = json_data.get('event', None)
-        if not schema_name:
-            return False, f'В файле {self.file}  не указанно название схемы'
-        if f'{schema_name}.schema' not in self.schemas:
-            return False, 'Нет такой схемы'
-        with open(f'schema/{schema_name}.schema', "r",
-                  encoding="utf-8") as schema:
-            schema_obj = json.load(schema)
-            return True, schema_obj
-
-    def _is_json_valid(self, json_data):
-        if not json_data:
-            return False, f' Файл {self.file} не содержит json'
-        data = json_data.get('data', None)
-        if not data:
-            return False, f' Нет данных в файле {self.file}'
-        if not isinstance(data, dict):
-            return False, f'{self.file} это не json'
-        return True, data
-
-    def validate(self):
-        json_data = self.load_json()
-        json_is_valid, data = self._is_json_valid(json_data)
-
-        if json_is_valid:
-            schema_is_valid, json_schema = self._get_schema(json_data)
-
-            if schema_is_valid:
-                instance = data
-                validator = Draft7Validator(json_schema)
-                if validator.is_valid(instance):
-                    self.messages.append('все хорошо')
-                else:
-                    errors = validator.iter_errors(instance)
-                    for error in errors:
-                        self.messages.append(error.message)
-
+        for error in self.errors:
+            if isinstance(error, str):
+                self.message.append(error)
+                self.message.append('________________')
             else:
-                self.messages.append(json_schema)
-        else:
-            self.messages.append(data)
+
+                self.message.append(error.message)
+                self.message.append(f'Instanse field path {error.absolute_path}')
+                if len(error.absolute_path) != 0:
+                    self.message.append(f'Current value "{error.instance}"')
+                self.message.append(error.validator)
+                self.message.append('________________')
 
         self._write_log_file()
 
 
+    def _write_log_file(self):
+        with open('errors.log', 'a') as logfile:
+            for message in self.message:
+                logfile.write(message + '\n')
+            # logfile.write('_______________' + '\n')
+
+
+
+    def _load_json(self, file):
+        with open(f'event/{file}', 'r', encoding='utf-8') as read_j:
+            data = json.load(read_j)
+        return data
+
+    def _check_error_in_json_file(self, json_data):
+        if not json_data:
+            return 'Файл не содержит json'
+        data = json_data.get('data', None)
+        if not data:
+            return 'Нет данных в файле'
+        if not isinstance(data, dict):
+            'Это не json'
+        return None
+
+    def _check_schema_errors(self, json_data):
+        schema_name = json_data.get('event', None)
+        if not schema_name:
+            return 'В файле не указанно название схемы'
+        if f'{schema_name}.schema' not in self.schemas:
+            return 'Ошибка названии схемы в поле "event", ' \
+                   'либо такой схемы не существует'
+        return None
+
+    def _get_schema(self, schema_name):
+        with open(f'schema/{schema_name}.schema', "r",
+                  encoding="utf-8") as schema:
+            schema_obj = json.load(schema)
+            return schema_obj
+
+    def validate(self, file):
+        self.message.append(f'Error in file: {file}')
+        json_data = self._load_json(file)
+        json_errors = self._check_error_in_json_file(json_data)
+        if not json_errors:
+            schema_errors = self._check_schema_errors(json_data)
+            if not schema_errors:
+                instance = json_data['data']
+                schema = self._get_schema(json_data['event'])
+                validator = Draft7Validator(schema)
+                for error in sorted(validator.iter_errors(instance), key=lambda e: e.path):
+                    self.errors.append(error)
+            else:
+                self.errors.append(schema_errors)
+        else:
+            self.errors.append(json_errors)
+        return self._errors()
+
+
 def main():
     json_files = os.listdir('event')
+    # file = '297e4dc6-07d1-420d-a5ae-e4aff3aedc19.json'
     schemas = os.listdir('schema')
+    # t = ValidateJson(schemas)
+    # t.validate(file)
     for file in json_files:
-        t = ValidateJson(file, schemas)
-        t.validate()
-    # schema_dir = os.path.abspath('schema')
-    # event_dir = os.path.abspath('event')
-    # schemas = os.listdir(schema_dir)
-    # events = os.listdir(event_dir)
-    #
-    # for event in events:
-    #     event_file_name = os.path.join(event_dir, event)
-    #     t = ValidateJson(event_file_name, schemas)
-    #     t.validate()
+        t = ValidateJson(schemas)
+        t.validate(file)
 
 
 if __name__ == '__main__':
